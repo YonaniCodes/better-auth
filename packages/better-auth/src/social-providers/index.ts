@@ -18,6 +18,7 @@ import { z } from "zod";
 import { vk } from "./vk";
 import { kick } from "./kick";
 import { zoom } from "./zoom";
+
 export const socialProviders = {
 	apple,
 	discord,
