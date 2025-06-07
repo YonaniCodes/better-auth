@@ -1,171 +1,144 @@
-// packages/better-auth/src/plugins/telegram/index.ts  
-import { createAuthEndpoint } from "../../api/call";
-import { createHMAC } from "@better-auth/utils/hmac";  
-import { createHash } from "@better-auth/utils/hash";  
-import { APIError } from "better-call";
-import { setSessionCookie } from "../../cookies";  
-import { handleOAuthUserInfo } from "../../oauth2/link-account";
-import type { BetterAuthPlugin } from "../../types/plugins";  
-import { z } from "zod";  
-  
-interface TelegramOptions {  
-  botToken: string;  
-  botUsername: string;  
-  /**  
-   * Maximum age of auth data in seconds  
-   * @default 86400 (24 hours)  
-   */  
-  maxAge?: number;  
-  /**  
-   * Disable sign up if user is not found  
-   * @default false  
-   */  
-  disableSignUp?: boolean;  
-}  
-  
-const ERROR_CODES = {  
-  INVALID_TELEGRAM_DATA: "Invalid Telegram data",  
-  OUTDATED_DATA: "Telegram data is outdated",  
-  SIGNATURE_VERIFICATION_FAILED: "Signature verification failed",  
-} as const;  
-  
-export const telegram = (options: TelegramOptions) => {  
-  const maxAge = options.maxAge || 86400; // 24 hours  
-  async function verifyTelegramData(authData: Record<string, string>) {
-  const { hash, ...dataToCheck } = authData;
+import { z } from "zod";
+import { APIError, createAuthEndpoint } from "../../api";
+import { setSessionCookie } from "../../cookies";
+import type { BetterAuthPlugin } from "../../types";
+import { isAuthDateValid, verifyHash } from "./helpers";
 
-  if (!hash) {
-    throw new APIError("BAD_REQUEST", {
-      message: ERROR_CODES.INVALID_TELEGRAM_DATA,
-    });
-  }
+interface TelegramOptions {
+  disableSignup?: boolean;
+  botToken: string;
 
-  const dataCheckString = Object.entries(dataToCheck)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
-
-  // 🔐 Step 1: Derive raw secret key from bot token
-  const secretKeyRaw = await createHash("SHA-256").digest(options.botToken);
-
-  // 🔐 Step 2: Create HMAC utility with SHA-256 and hex encoding
-  const hmac = createHMAC("SHA-256", "hex");
-
-  // 🔐 Step 3: Import raw key into CryptoKey object for verification
-  const hmacKey = await hmac.importKey(secretKeyRaw, "verify");
-
-  // 🔐 Step 4: Verify the HMAC
-  const isValid = await hmac.verify(hmacKey, dataCheckString, hash);
-
-  if (!isValid) {
-    throw new APIError("UNAUTHORIZED", {
-      message: ERROR_CODES.SIGNATURE_VERIFICATION_FAILED,
-    });
-  }
-
-  const authDate = parseInt(authData.auth_date);
-  const currentTime = Math.floor(Date.now() / 1000);
-
-  if (currentTime - authDate > maxAge) {
-    throw new APIError("BAD_REQUEST", {
-      message: ERROR_CODES.OUTDATED_DATA,
-    });
-  }
-
-  return authData;
+  // default 24 hours It wont verify after 24 hours
+  expiresIn?: number
 }
 
 
-   
-  return {  
-    id: "telegram",  
-    endpoints: {  
-      telegramCallback: createAuthEndpoint(  
-        "/telegram/callback",  
-        {  
-          method: "GET",  
-          query: z.object({  
-            id: z.string(),  
-            first_name: z.string(),  
-            last_name: z.string().optional(),  
-            username: z.string().optional(),  
-            photo_url: z.string().optional(),  
-            auth_date: z.string(),  
-            hash: z.string(),  
-          }),  
-          metadata: {  
-            openapi: {  
-              description: "Telegram Login Widget callback",  
-              responses: {  
-                302: {  
-                  description: "Redirect to callback URL",  
-                },  
-              },  
-            },  
-          },  
-        },  
-        async (ctx) => {  
-          try {  
-            // Verify Telegram data  
-            const verifiedData = await verifyTelegramData(ctx.query);  
-              
-            // Map Telegram user data to better-auth format  
-            const userInfo = {  
-              id: verifiedData.id,  
-              name: verifiedData.last_name   
-                ? `${verifiedData.first_name} ${verifiedData.last_name}`  
-                : verifiedData.first_name,  
-              email: verifiedData.username 
-  ? `${verifiedData.username}@telegram.user` 
-  : `${verifiedData.id}@telegram.user`,
 
-              image: verifiedData.photo_url,  
-              emailVerified: false, // Telegram doesn't provide email verification  
-            };  
-  
-            // Handle user authentication/registration  
-            const result = await handleOAuthUserInfo(ctx, {  
-              userInfo,  
-              account: {  
-                providerId: "telegram",  
-                accountId: verifiedData.id,  
-                // accessToken: "", // Telegram doesn't provide tokens  
-                // refreshToken: "",  
-                // expiresAt: null,  
-                scope: "",  
-              },  
-              disableSignUp: options.disableSignUp || false,  
-            });  
-  
-            if (result.error) {  
-              const errorURL = ctx.context.options.onAPIError?.errorURL ||   
-                `${ctx.context.baseURL}/error`;  
-              throw ctx.redirect(`${errorURL}?error=${result.error}`);  
-            }  
-  
-            const { session, user } = result.data!;  
-              
-            // Set session cookie  
-            await setSessionCookie(ctx, {  
-              session,  
-              user,  
-            });  
-  
-            // Redirect to success URL  
-            // const callbackURL = ctx.query.callback_url || "/";  
-            // throw ctx.redirect(callbackURL);  
-              
-          } catch (error) {  
-            if (error instanceof APIError) {  
-              const errorURL = ctx.context.options.onAPIError?.errorURL ||   
-                `${ctx.context.baseURL}/error`;  
-              throw ctx.redirect(`${errorURL}?error=${error.message}`);  
-            }  
-            throw error;  
-          }  
-        }  
-      ),  
-    },  
-    $ERROR_CODES: ERROR_CODES,  
-  } satisfies BetterAuthPlugin;  
-};
+export const telegramOAuth = (options: TelegramOptions) =>
+  ({
+    id: "telegram",
+    endpoints: {
+      telegramCallback: createAuthEndpoint(
+        "/telegram/callback",
+        {
+          method: "POST",
+          body: z.object({
+            id: z.string(),
+            first_name: z.string(),
+            last_name: z.string().optional(),
+            username: z.string().optional(),
+            photo_url: z.string().optional(),
+            auth_date: z.string(),
+            hash: z.string(),
+          }),
+          metadata: {
+            openapi: {
+              summary: "Telegram auth callback",
+              description: "Authenticate using Telegram OAuth",
+              responses: {
+                200: {
+                  description: "Successful response",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {
+                          token: { type: "string" },
+                          user: {
+                            $ref: "#/components/schemas/User",
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+                400: {
+                  description: "Invalid request",
+                },
+              },
+            },
+          },
+        },
+        async (ctx) => {
+          const {
+            id,
+            first_name,
+            last_name,
+            photo_url,
+            hash,
+            auth_date,
+            ...rest
+          } = ctx.body;
+
+
+          const {botToken,expiresIn}= options
+
+          const telegramId = id;
+          const name = `${first_name}${last_name ? " " + last_name : ""}`;
+          const image = photo_url;
+         
+
+          if (!isAuthDateValid(auth_date,expiresIn))
+             throw new APIError("UNAUTHORIZED", {
+              message: "Auth data is too old. Rejecting login",
+            });
+
+
+          if (!verifyHash(ctx.body,botToken)) 
+            throw new APIError("UNAUTHORIZED", {
+              message: "Invalid Telegram signature",
+            });
+          
+
+          let account = await ctx.context.internalAdapter.findAccount(telegramId);
+          let user;
+
+          if (!account) {
+            if (options?.disableSignup) {
+              throw new APIError("UNAUTHORIZED", {
+                message: "User not found",
+              });
+            }
+
+            const { user: newUser, account: newAccount } = await ctx.context.internalAdapter.createOAuthUser(
+              {
+                email: `${telegramId}@telegram.local`,
+                name,
+                image,
+                emailVerified: false,
+              },
+              {
+                providerId: "telegram",
+                accountId: telegramId,
+              },
+              ctx
+            );
+
+            user = newUser;
+            account = newAccount;
+          }
+
+          const session = await ctx.context.internalAdapter.createSession(user.id, ctx);
+
+          await setSessionCookie(ctx, {
+            user,
+            session,
+          });
+
+          console.log(session, user)
+          return ctx.json({
+            token: session.token,
+            user: {
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              image: user.image,
+              emailVerified: user.emailVerified,
+              createdAt: user.createdAt,
+              updatedAt: user.updatedAt,
+            },
+          });
+        }
+      ),
+    },
+  }) satisfies BetterAuthPlugin;

@@ -18,4 +18,6 @@ export * from "../../plugins/sso/client";
 export * from "../../plugins/oidc-provider/client";
 export * from "../../plugins/api-key/client";
 export * from "../../plugins/one-time-token/client";
+export *from  "../../plugins/one-time-token/client"
+export * from "../../plugins/telegram-oauth/client";  
 export type * from "@simplewebauthn/server";
