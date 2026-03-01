@@ -44,3 +44,8 @@ export function isAuthDateValid(authDateStr: string, maxAgeSeconds = 86400): boo
   const now = Math.floor(Date.now() / 1000);
   return now - authDate <= maxAgeSeconds;
 }
+
+export function fakeTelegramEmail (id:string): string {
+  return `https://web.telegram.org/a/#${id}`
+
+}
